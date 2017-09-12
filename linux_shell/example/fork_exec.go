@@ -14,6 +14,9 @@ func main() {
 	      panic(lookErr)
 	  }*/
 
+	// https://godoc.org/syscall#ProcAttr
+	// https://godoc.org/syscall#SysProcAttr
+
 	workingDir := "/"
 	environ := os.Environ()
 	files := []uintptr{uintptr(syscall.Stdin), uintptr(syscall.Stdout), uintptr(syscall.Stderr)}
