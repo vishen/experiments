@@ -1,10 +1,7 @@
 package main
 
-/*
-	It start new process which is traced so it stops before executing first instruction and sends signal to the parent process. Parent process waits for such signal and issues logs like log.Printf("State: %v\n", err). Afterwards process is restarted and parent waits for its termination.
-*/
-
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -12,68 +9,138 @@ import (
 	"syscall"
 )
 
+func step(pid int) error {
+	return syscall.PtraceSingleStep(pid)
+}
+
+func cont(pid int) error {
+	return syscall.PtraceCont(pid, 0)
+}
+
+func getRegisters(pid int) (syscall.PtraceRegs, error) {
+	var regs syscall.PtraceRegs
+	err := syscall.PtraceGetRegs(pid, &regs)
+
+	if err != nil {
+		return regs, err
+	}
+
+	return regs, nil
+}
+
+func setPC(pid int, pc uint64) error {
+	regs, err := getRegisters(pid)
+	if err != nil {
+		return err
+	}
+
+	regs.SetPC(pc)
+
+	if err := syscall.PtraceSetRegs(pid, &regs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getPC(pid int) (uint64, error) {
+	regs, err := getRegisters(pid)
+	if err != nil {
+		return 0, err
+	}
+
+	return regs.PC(), nil
+}
+
+func setBreakpoint(pid int, breakpoint uintptr) ([]byte, error) {
+	// The INT 3 instruction generates a special one byte opcode (CC) that is intended for calling the debug exception handler
+	// We need to get and return the current instruction while overwriting with 0xCC
+	original := make([]byte, 1)
+	if _, err := syscall.PtracePeekData(pid, breakpoint, original); err != nil {
+		return nil, err
+	}
+
+	if _, err := syscall.PtracePokeData(pid, breakpoint, []byte{0xCC}); err != nil {
+		return nil, err
+	}
+
+	return original, nil
+}
+
+func cleanBreakpoint(pid int, breakpoint uintptr, original []byte) error {
+	if _, err := syscall.PtracePokeData(pid, breakpoint, original); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func printState(pid int) error {
+	regs, err := getRegisters(pid)
+	if err != nil {
+		return err
+	}
+
+	// fmt.Printf("%#v\n", regs)
+	// orax := regs.Orig_rax
+	/*
+		switch orax {
+				case 1: // sys_write
+					printPeekData(pid, regs.Rsi, regs.Rdx)
+				case 2: // sys_open
+					printPeekData(pid, regs.Rdi, 256)
+				case 3: // sys_close
+					fmt.Printf("Closing: %d\n", regs.Rdi)
+				}
+	*/
+
+	fmt.Printf("rax=%d rdi=%d rsi=%d rdx=%d rbx=%d\n", regs.Rax, regs.Rdi, regs.Rsi, regs.Rdx, regs.Rbx)
+
+	return nil
+}
+
 func main() {
-
-	fmt.Printf("Run %v\n", os.Args[1:])
-
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)
 
-	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
 
-	err := cmd.Start()
-	if err != nil {
-		log.Fatal(err)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Ptrace: true,
 	}
 
-	err = cmd.Wait()
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("Error: cmd.Start(1): %s\n", err)
+	}
 
-	log.Printf("State: %v\n", err)
-	log.Println("Restarting...")
+	err := cmd.Wait()
 
 	cpid := cmd.Process.Pid
-	// Get parent group id?
-	pgid, err := syscall.Getpgid(cpid)
-	if err != nil {
-		log.Panic("Error: syscall.Getpdig(1): ", err)
-	}
 
-	/*
-		PTRACE_O_TRACECLONE:
-			-> Stop the tracee at the next clone(2) and automatically start tracing the newly cloned process...
-	*/
-	if syscall.PtraceSetOptions(cpid, syscall.PTRACE_O_TRACECLONE); err != nil {
-		log.Fatal("Error: syscall.PtraceSetOptions(1): ", err)
-	}
-
-	// Stops tracee (command passed) after execution of single instruction
-	if syscall.PtraceSingleStep(cpid); err != nil {
-		log.Panic("Error: syscall.PtraceSingleStep(1): ", err)
-	}
-
-	steps := 1
+	fmt.Printf("Current state for %d: %v\n", cpid, err)
 
 	for {
-		var ws syscall.WaitStatus
-		/* 	wait4 suspends execution of the current process until a child (as specified by pid) has exited,
-		or until a signal is delivered whose action is to terminate the current process or to call a signal handling function. */
-		wpid, err := syscall.Wait4(-1*pgid, &ws, syscall.WALL, nil)
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("godebugger> ")
+
+		command, err := reader.ReadString('\n')
 		if err != nil {
-			log.Fatal("Error: syscall.Wait4(1): ", err)
+			log.Fatalf("Error: reader.ReadString(1): %s\n", err)
 		}
 
-		if wpid == cpid && ws.Exited() {
-			break
-		}
+		command = command[:len(command)-1]
 
-		if !ws.Exited() {
-			if err := syscall.PtraceSingleStep(wpid); err != nil {
-				log.Fatal("Error: syscall.PtraceSingleStep(2): ", err)
+		if command == "state" || command == "print" {
+			if err := printState(cpid); err != nil {
+				log.Printf("Error: printState(1): %s\n", err)
 			}
-			steps += 1
+		} else if command == "step" || command == "next" {
+			if err := step(cpid); err != nil {
+				log.Printf("Error: step(1): %s\n", err)
+			}
+		} else {
+			log.Printf("Uknown command '%s'\n", command)
 		}
 	}
-	log.Printf("Steps: %d\n", steps)
-
 }
