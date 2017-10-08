@@ -43,7 +43,7 @@ Vagrant.configure("2") do |config|
   # the path on the host to the actual folder. The second argument is
   # the path on the guest to mount the folder. And the optional third
   # argument is a set of non-required options.
-  # config.vm.synced_folder "../data", "/vagrant_data"
+  config.vm.synced_folder "../../", "/home/vagrant"
 
   # Provider-specific configuration so you can fine-tune various
   # backing providers for Vagrant. These expose provider-specific options.
@@ -65,7 +65,12 @@ Vagrant.configure("2") do |config|
   # documentation for more information about their specific syntax and use.
   config.vm.provision "shell", inline: <<-SHELL
     sudo apt-get update
-    sudo apt-get install golang-go git nasm -y
+    sudo apt-get install git nasm -y
+
+    sudo add-apt-repository ppa:gophers/archive
+    sudo apt update
+    sudo apt-get install golang-1.9-go
+    sudo ln -s /usr/lib/go-1.9/bin/go /usr/local/bin
 
     echo "export GOPATH=/go" >> /home/vagrant/.bashrc
     echo "export PATH=$PATH:/go/bin" >> /home/vagrant/.bashrc
