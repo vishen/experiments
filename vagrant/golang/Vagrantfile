@@ -69,7 +69,7 @@ Vagrant.configure("2") do |config|
 
     sudo add-apt-repository ppa:gophers/archive
     sudo apt update
-    sudo apt-get install golang-1.9-go
+    sudo apt-get install golang-1.9-go -y
     sudo ln -s /usr/lib/go-1.9/bin/go /usr/local/bin
 
     echo "export GOPATH=/go" >> /home/vagrant/.bashrc

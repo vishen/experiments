@@ -1,5 +1,7 @@
 package main
 
+// https://lk4d4.darth.io/posts/unpriv4/
+
 import (
 	"flag"
 	"fmt"
@@ -9,6 +11,10 @@ import (
 	"syscall"
 )
 
+const (
+	containerCloneFlags = syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET
+)
+
 func run(args ...string) error {
 
 	/*
@@ -16,6 +22,8 @@ func run(args ...string) error {
 		- CLONE_NEWUSER: Create new user namespace for this process
 		- CLONE_NEWPID:
 		- CLONE_NEWUTS: Lets you edit the hostname
+		- CLONE_NEWNS: Lets you mount /proc/
+		- CLONE_NEWNT: Lets you create a network namespace, defaults to no namespace
 	*/
 
 	uid := os.Getuid()
@@ -26,7 +34,7 @@ func run(args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Cloneflags: containerCloneFlags,
 		UidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
@@ -43,14 +51,12 @@ func run(args ...string) error {
 		},
 	}
 
-	/*if err := cmd.Start(); err != nil {
-		return err
-	}*/
-
 	return cmd.Run()
 }
 
 func child(args ...string) error {
+
+	// setGgroups()
 
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin
@@ -69,12 +75,27 @@ func child(args ...string) error {
 		return fmt.Errorf("Error mounting /proc: %s", err)
 	}
 
+	// Cleanup mounts
+	defer func() {
+		syscall.Unmount("proc", 0)
+
+	}()
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("Error running command: %s", err)
 	}
 
-	// Set CGroups
+	return nil
+}
+
+func setCgroups() {
+
+	// Set CGroups, this
 	/*
+		// https://wiki.archlinux.org/index.php/cgroups
+		// https://github.com/docker/libcontainer/tree/master/cgroups/fs
+		// https://0xax.gitbooks.io/linux-insides/Cgroups/cgroups1.html
+		// http://manpages.ubuntu.com/manpages/zesty/man7/cgroups.7.html
 			func cg() {
 			cgroups := "/sys/fs/cgroup/"
 			pids := filepath.Join(cgroups, "pids")
@@ -84,14 +105,28 @@ func child(args ...string) error {
 			must(ioutil.WriteFile(filepath.Join(pids, "liz/notify_on_release"), []byte("1"), 0700))
 			must(ioutil.WriteFile(filepath.Join(pids, "liz/cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0700))
 		}
-			cgroups := "/sys/fs/cgroup/"
-			pids := filepath.Join(cgroups, "pids")
-			os.Mkdir(filepath.Join(pids, "containerr"), 0755)
 	*/
+	/*
+		cgroups := "/sys/fs/cgroup/"
+		pids := filepath.Join(cgroups, "pids")
+		path := filepath.Join(pids, "containerr")
 
-	syscall.Unmount("proc", 0)
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return err
+		}
 
-	return nil
+		if err := ioutil.WriteFile(path+"/pids.max", []byte("1"), 0700); err != nil {
+			return err
+		}
+
+		if err := ioutil.WriteFile(path+"/notify_on_release", []byte("1"), 0700); err != nil {
+			return err
+		}
+
+		if err := ioutil.WriteFile(path+"/cgroup.procs", []byte(strconv.Itoa(os.Getpid())), 0700); err != nil {
+			return err
+		}
+	*/
 }
 
 func main() {
